@@ -1,0 +1,127 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum GenerationType {
+  IDEA
+  SCRIPT
+  CAPTION
+  HASHTAG
+  CONTENT_PLAN
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+}
+
+enum PlanTier {
+  FREE
+  PRO
+}
+
+model User {
+  id          String   @id @default(cuid())
+  clerkUserId String   @unique
+  email       String   @unique
+  name        String?
+  niche       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  generations   Generation[]
+  subscription  Subscription?
+  usage         UsageCounter[]
+  feedback      Feedback[]
+
+  @@index([clerkUserId])
+}
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  userId               String             @unique
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  stripeCustomerId     String?            @unique
+  stripeSubscriptionId String?            @unique
+  stripePriceId        String?
+
+  tier                 PlanTier           @default(FREE)
+  status               SubscriptionStatus @default(ACTIVE)
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean            @default(false)
+
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+}
+
+model UsageCounter {
+  id          String         @id @default(cuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        GenerationType
+  periodStart DateTime
+  count       Int            @default(0)
+
+  @@unique([userId, type, periodStart])
+  @@index([userId, periodStart])
+}
+
+model Generation {
+  id            String         @id @default(cuid())
+  userId        String
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type          GenerationType
+  input         Json
+  output        String         @db.Text
+  metadata      Json?
+
+  // Tracks which prompt template version produced this output —
+  // required so prompt iteration never loses the ability to compare results.
+  promptVersion String         @default("v1")
+
+  // Optional quality signal (0-100), set either by automated scoring
+  // or backfilled from user feedback. Nullable: not every generation is scored.
+  qualityScore  Int?
+
+  isFavorite    Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+
+  feedback      Feedback[]
+
+  @@index([userId, type, createdAt])
+  @@index([userId, isFavorite])
+  @@index([promptVersion])
+}
+
+// Captures user feedback against a specific generation. Foundation for
+// quality-score backfilling and future prompt-version comparison.
+model Feedback {
+  id           String      @id @default(cuid())
+  userId       String
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  generationId String
+  generation   Generation  @relation(fields: [generationId], references: [id], onDelete: Cascade)
+
+  // 1-5 star-style rating from the user
+  rating       Int
+  comment      String?     @db.Text
+
+  createdAt    DateTime    @default(now())
+
+  @@index([generationId])
+  @@index([userId])
+}
